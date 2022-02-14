@@ -837,6 +837,18 @@ func validHostname(host string, isPattern bool) bool {
 	return true
 }
 
+// commonNameAsHostname reports whether the Common Name field should be
+// considered the hostname that the certificate is valid for. This is a legacy
+// behavior, disabled by default or if the Subject Alt Name extension is present.
+//
+// It applies the strict validHostname check to the Common Name field, so that
+// certificates without SANs can still be validated against CAs with name
+// constraints if there is no risk the CN would be matched as a hostname.
+// See NameConstraintsWithoutSANs and issue 24151.
+func (c *Certificate) commonNameAsHostname() bool {
+	return !c.hasSANExtension() && validHostnamePattern(c.Subject.CommonName)
+}
+
 func matchExactly(hostA, hostB string) bool {
 	if hostA == "" || hostA == "." || hostB == "" || hostB == "." {
 		return false
@@ -932,7 +944,13 @@ func (c *Certificate) VerifyHostname(h string) error {
 	candidateName := toLowerCaseASCII(h) // Save allocations inside the loop.
 	validCandidateName := validHostnameInput(candidateName)
 
-	for _, match := range c.DNSNames {
+	// TODO: remove this hack
+	names := c.DNSNames
+	if c.commonNameAsHostname() {
+		names = []string{c.Subject.CommonName}
+	}
+
+	for _, match := range names {
 		// Ideally, we'd only match valid hostnames according to RFC 6125 like
 		// browsers (more or less) do, but in practice Go is used in a wider
 		// array of contexts and can't even assume DNS resolution. Instead,
